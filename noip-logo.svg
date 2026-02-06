@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="800" fill="#09090B"/>
+
+  <!-- n8n-style node connection lines (bezier curves like n8n canvas) -->
+  <g stroke="#ffffff" fill="none" stroke-width="1.5" opacity="0.12">
+    <!-- Top-left to Node N -->
+    <path d="M 80 200 C 160 200, 180 290, 230 290"/>
+    <!-- Left to Node N -->
+    <path d="M 80 340 C 140 340, 170 320, 230 310"/>
+    <!-- Bottom-left to Node N -->
+    <path d="M 80 460 C 160 460, 180 330, 230 330"/>
+    
+    <!-- Node P to right outputs -->
+    <path d="M 570 290 C 620 290, 640 200, 720 200"/>
+    <path d="M 570 310 C 630 310, 640 340, 720 340"/>
+    <path d="M 570 330 C 620 330, 640 460, 720 460"/>
+  </g>
+
+  <!-- Input dots (left side - data sources) -->
+  <g fill="#ffffff" opacity="0.18">
+    <circle cx="80" cy="200" r="4"/>
+    <circle cx="80" cy="340" r="4"/>
+    <circle cx="80" cy="460" r="4"/>
+  </g>
+
+  <!-- Output dots (right side - routed outputs) -->
+  <g fill="#ffffff" opacity="0.18">
+    <circle cx="720" cy="200" r="4"/>
+    <circle cx="720" cy="340" r="4"/>
+    <circle cx="720" cy="460" r="4"/>
+  </g>
+
+  <!-- ==================== -->
+  <!-- NODE: N              -->
+  <!-- ==================== -->
+  <g transform="translate(270, 270)">
+    <!-- n8n-style node box -->
+    <rect x="0" y="0" width="56" height="56" rx="12" 
+          fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.5"/>
+    <!-- Connection port left -->
+    <circle cx="0" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.4"/>
+    <!-- Connection port right -->
+    <circle cx="56" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.4"/>
+    <!-- Letter -->
+    <text x="28" y="34" text-anchor="middle" font-family="'SF Mono','JetBrains Mono','Fira Code',monospace" 
+          font-size="22" font-weight="600" fill="#ffffff" opacity="0.85">N</text>
+  </g>
+
+  <!-- Connection line N → O -->
+  <g stroke="#ffffff" fill="none" stroke-width="1.5" opacity="0.2">
+    <path d="M 330 298 C 355 298, 360 298, 375 298"/>
+  </g>
+
+  <!-- ==================== -->
+  <!-- NODE: O              -->
+  <!-- ==================== -->
+  <g transform="translate(375, 270)">
+    <rect x="0" y="0" width="56" height="56" rx="12" 
+          fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.5"/>
+    <circle cx="0" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.4"/>
+    <circle cx="56" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.4"/>
+    <text x="28" y="34" text-anchor="middle" font-family="'SF Mono','JetBrains Mono','Fira Code',monospace" 
+          font-size="22" font-weight="600" fill="#ffffff" opacity="0.85">O</text>
+  </g>
+
+  <!-- Connection line O → I -->
+  <g stroke="#ffffff" fill="none" stroke-width="1.5" opacity="0.2">
+    <path d="M 435 298 C 460 298, 465 298, 480 298"/>
+  </g>
+
+  <!-- ==================== -->
+  <!-- NODE: I (active/main)-->
+  <!-- ==================== -->
+  <g transform="translate(480, 270)" filter="url(#glow)">
+    <rect x="0" y="0" width="56" height="56" rx="12" 
+          fill="rgba(255,255,255,0.06)" stroke="#ffffff" stroke-width="1.8" opacity="0.8"/>
+    <circle cx="0" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.5"/>
+    <circle cx="56" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.5"/>
+    <!-- Active indicator dot -->
+    <circle cx="46" cy="10" r="3" fill="#ffffff" opacity="0.6"/>
+    <text x="28" y="34" text-anchor="middle" font-family="'SF Mono','JetBrains Mono','Fira Code',monospace" 
+          font-size="22" font-weight="600" fill="#ffffff" opacity="0.95">I</text>
+  </g>
+
+  <!-- Connection line I → P -->
+  <g stroke="#ffffff" fill="none" stroke-width="1.5" opacity="0.2">
+    <path d="M 540 298 C 548 298, 552 298, 558 298"/>
+  </g>
+
+  <!-- ==================== -->
+  <!-- NODE: P              -->
+  <!-- ==================== -->
+  <g transform="translate(558, 270)">
+    <rect x="0" y="0" width="56" height="56" rx="12" 
+          fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.5"/>
+    <circle cx="0" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.4"/>
+    <circle cx="56" cy="28" r="4" fill="#09090B" stroke="#fff" stroke-width="1.2" opacity="0.4"/>
+    <text x="28" y="34" text-anchor="middle" font-family="'SF Mono','JetBrains Mono','Fira Code',monospace" 
+          font-size="22" font-weight="600" fill="#ffffff" opacity="0.85">P</text>
+  </g>
+
+  <!-- ==================== -->
+  <!-- WORDMARK             -->
+  <!-- ==================== -->
+  <text x="400" y="480" text-anchor="middle" 
+        font-family="'SF Mono','JetBrains Mono','Fira Code',monospace" 
+        font-size="64" font-weight="700" letter-spacing="24" fill="#ffffff" opacity="0.9">
+    NOIP
+  </text>
+
+  <!-- Subtitle -->
+  <text x="400" y="518" text-anchor="middle" 
+        font-family="'SF Mono','JetBrains Mono','Fira Code',monospace" 
+        font-size="10" letter-spacing="5" fill="#ffffff" opacity="0.2">
+    N8N OPEN ROUTER INTELLIGENCE PROXY
+  </text>
+
+  <!-- Thin separator line -->
+  <line x1="340" y1="495" x2="460" y2="495" stroke="#ffffff" stroke-width="0.5" opacity="0.1"/>
+</svg>
