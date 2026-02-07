@@ -1,0 +1,17 @@
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: noip-dev
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./src:/app/src
+      - ./nodemon.json:/app/nodemon.json
+      - ./tsconfig.json:/app/tsconfig.json
+    restart: unless-stopped

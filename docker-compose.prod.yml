@@ -1,0 +1,11 @@
+sservices:
+  proxy:
+    image: 
+    container_name: noip
+    expose:
+      - 
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped

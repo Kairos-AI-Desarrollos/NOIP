@@ -12,14 +12,14 @@ COPY src ./src
 RUN npm run build
 
 # Stage 2: Production
-FROM node:20-alpine AS production
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm ci --omit=dev && chown -R node:node node_modules
 
-COPY --from=build /app/dist ./dist
+COPY --chown=node:node --from=build /app/dist ./dist
 
 EXPOSE 3000
 
