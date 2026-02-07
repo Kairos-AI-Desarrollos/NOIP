@@ -7,7 +7,7 @@ export interface EnvConfig {
   port: number;
   nodeEnv: string;
   openRouterBaseUrl: string;
-  openRouterApiKey: string;
+  jwtSecret: string;
   cacheEnabled: boolean;
   cacheMinChars: number;
   cacheMaxBreakpoints: number;
@@ -19,11 +19,15 @@ export const env: EnvConfig = {
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   openRouterBaseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-  openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
+  jwtSecret: process.env.JWT_SECRET || '',
   cacheEnabled: process.env.CACHE_ENABLED !== 'false',
   cacheMinChars: parseInt(process.env.CACHE_MIN_CHARS || '1000', 10),
   cacheMaxBreakpoints: parseInt(process.env.CACHE_MAX_BREAKPOINTS || '4', 10),
   cacheTtl: process.env.CACHE_TTL || undefined,
   logLevel: process.env.LOG_LEVEL || 'info',
 };
+
+if (!env.jwtSecret) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
 

@@ -47,10 +47,10 @@ npm install
 cp .example.env .env
 ```
 
-Edita `.env` con tu API key de OpenRouter:
+Edita `.env` con un secreto para firmar tokens JWT:
 
 ```env
-OPENROUTER_API_KEY=sk-or-tu-key-aqui
+JWT_SECRET=un-secreto-seguro-aqui
 ```
 
 ## Configuración
@@ -60,7 +60,7 @@ OPENROUTER_API_KEY=sk-or-tu-key-aqui
 | `PORT`                  | `3000`                      | Puerto del servidor                                              |
 | `NODE_ENV`              | `development`               | Entorno (development/production)                                 |
 | `OPENROUTER_BASE_URL`   | `https://openrouter.ai/api` | URL base de OpenRouter                                           |
-| `OPENROUTER_API_KEY`    | —                           | Tu API key de OpenRouter                                         |
+| `JWT_SECRET`            | — **(requerido)**           | Secreto para firmar/verificar tokens JWT de autenticación        |
 | `CACHE_ENABLED`         | `true`                      | Activar/desactivar inyección de cache                            |
 | `CACHE_MIN_CHARS`       | `1000`                      | Caracteres mínimos para cachear un mensaje                       |
 | `CACHE_MAX_BREAKPOINTS` | `4`                         | Máximo de breakpoints de cache por request (límite de Anthropic) |
@@ -88,25 +88,48 @@ npm start
 docker compose up -d
 ```
 
+## Autenticación
+
+Todas las rutas `/v1/*` están protegidas con JWT. Cada request debe incluir dos headers:
+
+| Header           | Valor                        | Propósito                          |
+| ---------------- | ---------------------------- | ---------------------------------- |
+| `X-Proxy-Token`  | `Bearer <tu-jwt>`           | Autenticación contra el proxy      |
+| `Authorization`  | `Bearer sk-or-v1-xxx`       | Tu API key de OpenRouter           |
+
+### Generar un token JWT
+
+En [jwt.io](https://jwt.io/):
+
+1. Payload: `{ "proxy": "noip" }` (sin campo `exp` para que no expire)
+2. En "Verify Signature" pon el mismo valor de tu `JWT_SECRET`
+3. Copia el token generado
+
 ## Configurar n8n
 
-En el nodo de **OpenAI** o **AI Agent** de n8n:
+Debes usar el nodo **OpenAI** (no el de OpenRouter), ya que es el único que permite configurar una **Base URL** personalizada y headers custom.
 
-1. Ve a las credenciales de OpenAI/OpenRouter
-2. Cambia la **Base URL** a:
+1. Crea una credencial de tipo **OpenAI** en n8n
+2. En la API key, coloca tu **API key de OpenRouter** (`sk-or-v1-xxx`)
+3. Cambia la **Base URL** a:
    ```
    http://localhost:3000/v1
    ```
-3. Coloca tu API key de OpenRouter como API key
-4. Listo — n8n enviará las llamadas al proxy, que inyecta cache y las reenvía a OpenRouter
+4. En los headers personalizados, agrega `X-Proxy-Token: Bearer <tu-jwt>`
+5. Usa esta credencial en tus nodos de **AI Agent**, **Chat Model**, etc.
+6. Listo — n8n enviará las llamadas al proxy, que valida el JWT, inyecta cache y las reenvía a OpenRouter
 
 ## Despliegue en producción
 
-Si n8n no corre en la misma máquina que el proxy, tienes varias opciones:
+> **Importante:** NOIP escucha en HTTP plano (puerto 3000) y **no maneja TLS/SSL**. Si tu instancia de n8n está configurada con HTTPS strict (común en producción), **rechazará conexiones a endpoints HTTP**. Necesitas un reverse proxy con certificado TLS delante de NOIP.
 
-### Opción 1: Red Docker compartida (recomendado)
+### Reverse proxy con TLS (requerido para HTTPS)
 
-Si n8n y el proxy corren en Docker, conéctalos a la misma red:
+Coloca **Nginx**, **Traefik** o **Caddy** delante del proxy para terminar TLS:
+
+### Opción 1: Red Docker compartida (sin TLS)
+
+Si n8n y el proxy corren en la **misma máquina** dentro de Docker y n8n **no** tiene HTTPS strict habilitado, pueden comunicarse por HTTP interno:
 
 ```yaml
 # docker-compose.yml del proxy
@@ -141,7 +164,9 @@ http://localhost:3000/v1        # misma máquina
 http://<ip-interna>:3000/v1    # misma red privada
 ```
 
-### Opción 3: ngrok (túnel para pruebas)
+> Esto solo funciona si n8n no tiene HTTPS strict. Si lo tiene, necesitas el reverse proxy con TLS descrito arriba.
+
+### Opción 3: ngrok (solo para pruebas)
 
 Si n8n está en la nube y el proxy corre en tu máquina local:
 
@@ -155,7 +180,7 @@ Usa la URL pública que genera ngrok como Base URL en n8n:
 https://abc123.ngrok-free.app/v1
 ```
 
-> ngrok es ideal para pruebas rápidas, no para producción permanente.
+> ngrok provee HTTPS automáticamente, por lo que funciona con n8n en modo HTTPS strict. Sin embargo, es solo para pruebas rápidas, no para producción permanente.
 
 ## Endpoints
 
