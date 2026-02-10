@@ -3,31 +3,60 @@ import {
   Message,
   MessageContent,
   CacheControl,
+  Tool,
   ResponsesRequest,
   ResponsesInputItem,
 } from '../types';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 
-interface CacheCandidate {
-  index: number;
-  role: string;
+/**
+ * Represents a cache breakpoint candidate.
+ * Follows Anthropic's cache prefix order: tools → system → messages.
+ * See: https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching
+ */
+interface CacheBreakpoint {
+  type: 'system_message' | 'tools' | 'user_message';
+  messageIndex?: number;
   contentLength: number;
-  priority: number;
+  priority: number; // 0 = system, 1 = tools, 2 = user/assistant messages
 }
 
 /**
- * Injects cache_control into content parts of the messages array.
- * Follows OpenRouter spec: cache_control must be on content parts (inside arrays),
- * NOT at the message level. String content is converted to multipart format when needed.
+ * Checks if a model supports explicit cache_control injection.
+ * Models not in this list will pass through without cache_control
+ * to avoid 404 errors from OpenRouter.
+ */
+function isModelCacheCompatible(model: string): boolean {
+  const prefixes = env.cacheModelPrefixes;
+  if (prefixes.length === 0) return false;
+  if (prefixes.includes('*')) return true;
+  return prefixes.some((prefix) => model.startsWith(prefix));
+}
+
+/**
+ * Injects cache_control breakpoints into a chat completions request.
  *
- * Uses a strategic breakpoint selection algorithm:
- * 1. System messages always get highest priority
- * 2. Large recent messages get next priority (most recent first)
- * 3. Limited to cacheMaxBreakpoints (default 4, Anthropic's limit)
+ * Follows the official Anthropic prompt caching spec:
+ * - Cache prefix order: tools → system → messages
+ * - cache_control on tools: placed on the LAST element of the tools array
+ * - cache_control on messages: placed on the last text content part (multipart format)
+ * - Max 4 breakpoints per request
+ *
+ * Priority allocation:
+ *   0 = system messages (always cached, no min chars)
+ *   1 = tools array (one breakpoint for the entire array, on last tool)
+ *   2 = non-system messages (must meet cacheMinChars threshold, most recent first)
+ *
+ * Only applied to models in CACHE_MODEL_PREFIXES to avoid errors on unsupported models.
  */
 export function injectCacheControl(body: ChatCompletionRequest): ChatCompletionRequest {
   if (!env.cacheEnabled) {
+    return body;
+  }
+
+  if (!isModelCacheCompatible(body.model)) {
+    logger.debug(`Cache skip: model "${body.model}" not in compatible prefixes`);
     return body;
   }
 
@@ -35,68 +64,113 @@ export function injectCacheControl(body: ChatCompletionRequest): ChatCompletionR
     return body;
   }
 
-  const modified = { ...body, messages: [...body.messages] };
+  const breakpoints: CacheBreakpoint[] = [];
 
-  // Pass 1: Identify candidates
-  const candidates: CacheCandidate[] = [];
-
-  modified.messages.forEach((message: Message, index: number) => {
-    const contentLength = getContentLength(message);
-
+  // Collect system message candidates (priority 0 - always cached)
+  body.messages.forEach((message: Message, index: number) => {
     if (message.role === 'system') {
-      candidates.push({ index, role: message.role, contentLength, priority: 0 });
-    } else if (contentLength >= env.cacheMinChars) {
-      candidates.push({ index, role: message.role, contentLength, priority: 1 });
+      breakpoints.push({
+        type: 'system_message',
+        messageIndex: index,
+        contentLength: getContentLength(message),
+        priority: 0,
+      });
     }
   });
 
-  // Pass 2: Prioritize and select up to maxBreakpoints
-  candidates.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return b.index - a.index; // prefer more recent messages
+  // Collect tools candidate (priority 1 - one breakpoint for entire array)
+  if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
+    breakpoints.push({
+      type: 'tools',
+      contentLength: JSON.stringify(body.tools).length,
+      priority: 1,
+    });
+  }
+
+  // Collect non-system message candidates (priority 2 - must meet min chars)
+  body.messages.forEach((message: Message, index: number) => {
+    if (message.role !== 'system') {
+      const contentLength = getContentLength(message);
+      if (contentLength >= env.cacheMinChars) {
+        breakpoints.push({
+          type: 'user_message',
+          messageIndex: index,
+          contentLength,
+          priority: 2,
+        });
+      }
+    }
   });
 
-  const selected = candidates.slice(0, env.cacheMaxBreakpoints);
-  const selectedIndices = new Set(selected.map((c) => c.index));
+  // Sort: priority ASC, then message index DESC (most recent first)
+  breakpoints.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    const aIdx = a.messageIndex ?? -1;
+    const bIdx = b.messageIndex ?? -1;
+    return bIdx - aIdx;
+  });
+
+  // Select top N breakpoints
+  const selected = breakpoints.slice(0, env.cacheMaxBreakpoints);
 
   if (selected.length === 0) {
     return body;
   }
 
-  // Pass 3: Apply injection
   const cacheControl: CacheControl = { type: 'ephemeral', ...(env.cacheTtl && { ttl: env.cacheTtl }) };
+  const modified = { ...body, messages: [...body.messages] };
 
-  modified.messages = modified.messages.map((message: Message, index: number) => {
-    if (!selectedIndices.has(index)) return message;
+  // Determine what to cache
+  const messageIndicesToCache = new Set(
+    selected
+      .filter((bp) => bp.type === 'system_message' || bp.type === 'user_message')
+      .map((bp) => bp.messageIndex!),
+  );
+  const shouldCacheTools = selected.some((bp) => bp.type === 'tools');
 
-    if (typeof message.content === 'string') {
-      return {
-        ...message,
-        content: toMultipartContent(message.content, cacheControl),
-      };
-    }
+  // Inject into messages (system + user/assistant)
+  if (messageIndicesToCache.size > 0) {
+    modified.messages = modified.messages.map((message: Message, index: number) => {
+      if (!messageIndicesToCache.has(index)) return message;
 
-    if (Array.isArray(message.content)) {
-      const updatedContent = [...message.content];
-      for (let i = updatedContent.length - 1; i >= 0; i--) {
-        if (updatedContent[i].type === 'text') {
-          updatedContent[i] = { ...updatedContent[i], cache_control: cacheControl };
-          break;
-        }
+      if (typeof message.content === 'string') {
+        return {
+          ...message,
+          content: toMultipartContent(message.content, cacheControl),
+        };
       }
-      return { ...message, content: updatedContent };
-    }
 
-    return message;
-  });
+      if (Array.isArray(message.content)) {
+        const updatedContent = [...message.content];
+        for (let i = updatedContent.length - 1; i >= 0; i--) {
+          if (updatedContent[i].type === 'text') {
+            updatedContent[i] = { ...updatedContent[i], cache_control: cacheControl };
+            break;
+          }
+        }
+        return { ...message, content: updatedContent };
+      }
+
+      return message;
+    });
+  }
+
+  // Inject into tools (cache_control on the LAST tool per Anthropic spec)
+  if (shouldCacheTools && body.tools && body.tools.length > 0) {
+    const modifiedTools: Tool[] = [...body.tools];
+    const lastIdx = modifiedTools.length - 1;
+    modifiedTools[lastIdx] = { ...modifiedTools[lastIdx], cache_control: cacheControl };
+    modified.tools = modifiedTools;
+  }
 
   logger.info(`Cache control injected into ${selected.length}/${env.cacheMaxBreakpoints} breakpoints`, {
     model: body.model,
     totalMessages: body.messages.length,
-    breakpoints: selected.map((c) => ({
-      messageIndex: c.index,
-      role: c.role,
-      contentChars: c.contentLength,
+    totalTools: body.tools?.length ?? 0,
+    breakpoints: selected.map((bp) => ({
+      type: bp.type,
+      messageIndex: bp.messageIndex,
+      contentChars: bp.contentLength,
     })),
   });
 
@@ -105,11 +179,15 @@ export function injectCacheControl(body: ChatCompletionRequest): ChatCompletionR
 
 /**
  * Injects cache_control into the Responses API format (/v1/responses).
- * Same logic as injectCacheControl but works with `input` array of items
- * instead of `messages`.
+ * Same priority logic but works with `input` array of items instead of `messages`.
  */
 export function injectCacheControlResponses(body: ResponsesRequest): ResponsesRequest {
   if (!env.cacheEnabled) {
+    return body;
+  }
+
+  if (!isModelCacheCompatible(body.model)) {
+    logger.debug(`[Responses API] Cache skip: model "${body.model}" not in compatible prefixes`);
     return body;
   }
 
@@ -120,32 +198,34 @@ export function injectCacheControlResponses(body: ResponsesRequest): ResponsesRe
   const modified = { ...body, input: [...body.input] };
 
   // Pass 1: Identify candidates
-  const candidates: CacheCandidate[] = [];
+  const candidates: CacheBreakpoint[] = [];
 
   modified.input.forEach((item: ResponsesInputItem, index: number) => {
     const contentLength = getItemContentLength(item);
 
     if (item.role === 'system' || item.role === 'developer') {
-      candidates.push({ index, role: item.role, contentLength, priority: 0 });
+      candidates.push({ type: 'system_message', messageIndex: index, contentLength, priority: 0 });
     } else if (contentLength >= env.cacheMinChars) {
-      candidates.push({ index, role: item.role, contentLength, priority: 1 });
+      candidates.push({ type: 'user_message', messageIndex: index, contentLength, priority: 2 });
     }
   });
 
   // Pass 2: Prioritize and select
   candidates.sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
-    return b.index - a.index;
+    const aIdx = a.messageIndex ?? -1;
+    const bIdx = b.messageIndex ?? -1;
+    return bIdx - aIdx;
   });
 
   const selected = candidates.slice(0, env.cacheMaxBreakpoints);
-  const selectedIndices = new Set(selected.map((c) => c.index));
+  const selectedIndices = new Set(selected.map((c) => c.messageIndex!));
 
   if (selected.length === 0) {
     return body;
   }
 
-  // Pass 3: Apply injection at item level (Responses API doesn't support multipart content arrays)
+  // Pass 3: Apply injection at item level
   const cacheControl: CacheControl = { type: 'ephemeral', ...(env.cacheTtl && { ttl: env.cacheTtl }) };
 
   modified.input = modified.input.map((item: ResponsesInputItem, index: number) => {
@@ -157,8 +237,8 @@ export function injectCacheControlResponses(body: ResponsesRequest): ResponsesRe
     model: body.model,
     totalItems: body.input.length,
     breakpoints: selected.map((c) => ({
-      itemIndex: c.index,
-      role: c.role,
+      type: c.type,
+      itemIndex: c.messageIndex,
       contentChars: c.contentLength,
     })),
   });

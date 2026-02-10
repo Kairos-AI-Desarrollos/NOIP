@@ -14,9 +14,22 @@ export interface Message {
   content: string | MessageContent[];
 }
 
+export interface ToolFunction {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+
+export interface Tool {
+  type: 'function';
+  function: ToolFunction;
+  cache_control?: CacheControl;
+}
+
 export interface ChatCompletionRequest {
   model: string;
   messages: Message[];
+  tools?: Tool[];
   stream?: boolean;
   temperature?: number;
   max_tokens?: number;

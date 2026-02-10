@@ -12,6 +12,7 @@ export interface EnvConfig {
   cacheMinChars: number;
   cacheMaxBreakpoints: number;
   cacheTtl: string | undefined;
+  cacheModelPrefixes: string[];
   logLevel: string;
 }
 
@@ -24,6 +25,12 @@ export const env: EnvConfig = {
   cacheMinChars: parseInt(process.env.CACHE_MIN_CHARS || '1000', 10),
   cacheMaxBreakpoints: parseInt(process.env.CACHE_MAX_BREAKPOINTS || '4', 10),
   cacheTtl: process.env.CACHE_TTL || undefined,
+  cacheModelPrefixes: process.env.CACHE_MODEL_PREFIXES === '*'
+    ? ['*']
+    : (process.env.CACHE_MODEL_PREFIXES || 'anthropic/,deepseek/,google/,openai/,x-ai/')
+        .split(',')
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0),
   logLevel: process.env.LOG_LEVEL || 'info',
 };
 

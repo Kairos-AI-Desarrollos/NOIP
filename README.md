@@ -28,10 +28,10 @@ n8n  →  NOIP Proxy (localhost:3000)  →  OpenRouter  →  Claude / GPT / Gemi
 
 | Modelo                 | Tipo de caching               | Descuento en tokens cacheados | Mín. tokens                                       | TTL                     | Notas                                               |
 | ---------------------- | ----------------------------- | ----------------------------- | ------------------------------------------------- | ----------------------- | --------------------------------------------------- |
-| **Claude (Anthropic)** | Explícito via `cache_control` | 90% (reads a 0.1x)            | 1024 (Sonnet/Opus 4+), 4096 (Opus 4.5, Haiku 4.5) | 5 min (se renueva) o 1h | Máximo beneficio del proxy. Hasta 4 breakpoints     |
-| **Gemini 2.5 Pro**     | Implícito (automático)        | 75% (reads a 0.25x)           | 2048                                              | ~5 min (no se renueva)  | No necesita `cache_control`, el proxy no interfiere |
-| **Gemini 2.5 Flash**   | Implícito (automático)        | 75% (reads a 0.25x)           | 1024                                              | ~5 min (no se renueva)  | Igual que Pro, automático sin config                |
-| **GPT-4.1 (OpenAI)**   | Implícito (automático)        | 50% (reads a 0.5x)            | 1024                                              | 5-10 min                | No necesita el proxy, pero no interfiere            |
+| **Claude (Anthropic)** | Explícito via `cache_control` | 90% (reads a 0.1x)            | 1024 (Sonnet/Opus 4+), 4096 (Opus 4.5, Haiku 4.5) | 5 min (se renueva) o 1h | Máximo beneficio. Sistema + tools + mensajes cacheados. Hasta 4 breakpoints |
+| **DeepSeek**           | Explícito via `cache_control` | 90% (reads a 0.1x)            | 1024                                              | 5 min                   | Soportado por el proxy con `CACHE_MODEL_PREFIXES`   |
+| **Gemini 2.5 Pro**     | Implícito (automático)        | 75% (reads a 0.25x)           | 2048                                              | ~5 min (no se renueva)  | Caching automático, no requiere `cache_control`    |
+| **GPT-4.1 (OpenAI)**   | Implícito (automático)        | 50% (reads a 0.5x)            | 1024                                              | 5-10 min                | Caching automático, no requiere `cache_control`    |
 
 ## Requisitos
 
@@ -51,6 +51,13 @@ Edita `.env` con tu API key de OpenRouter:
 
 ```env
 OPENROUTER_API_KEY=sk-or-tu-key-aqui
+CACHE_MODEL_PREFIXES=anthropic/,deepseek/,google/,openai/,x-ai/
+```
+
+El proxy solo inyectará `cache_control` en los modelos que tengan un prefijo compatible. Para aplicar cache en **todos** los modelos (por tu cuenta y riesgo), usa:
+
+```env
+CACHE_MODEL_PREFIXES=*
 ```
 
 ## Configuración
@@ -59,12 +66,13 @@ OPENROUTER_API_KEY=sk-or-tu-key-aqui
 | ----------------------- | --------------------------- | ---------------------------------------------------------------- |
 | `PORT`                  | `3000`                      | Puerto del servidor                                              |
 | `NODE_ENV`              | `development`               | Entorno (development/production)                                 |
-| `OPENROUTER_BASE_URL`   | `https://openrouter.ai/api` | URL base de OpenRouter                                           |
+| `OPENROUTER_BASE_URL`   | `https://openrouter.ai/api/v1` | URL base de OpenRouter                                        |
 | `OPENROUTER_API_KEY`    | —                           | Tu API key de OpenRouter                                         |
 | `CACHE_ENABLED`         | `true`                      | Activar/desactivar inyección de cache                            |
 | `CACHE_MIN_CHARS`       | `1000`                      | Caracteres mínimos para cachear un mensaje                       |
 | `CACHE_MAX_BREAKPOINTS` | `4`                         | Máximo de breakpoints de cache por request (límite de Anthropic) |
-| `CACHE_TTL`             | —                           | TTL del cache (`1h` para 1 hora, vacío para 5 min default)       |
+| `CACHE_TTL`             | `5m`                        | TTL del cache (`5m` para 5 minutos, `1h` para 1 hora)            |
+| `CACHE_MODEL_PREFIXES`  | `anthropic/,deepseek/,google/,openai/,x-ai/` | Prefijos de modelos que soportan `cache_control`. Use `*` para todos |
 | `LOG_LEVEL`             | `info`                      | Nivel de logs (error, info, debug)                               |
 
 ## Uso
@@ -169,23 +177,22 @@ https://abc123.ngrok-free.app/v1
 
 ## ¿Cómo funciona el cache?
 
-El proxy usa un algoritmo de 3 pasos:
+El proxy implementa la estrategia oficial de Anthropic con 3 pasos:
 
-1. **Identificar candidatos** — System messages (siempre) + mensajes con contenido mayor a `CACHE_MIN_CHARS`
-2. **Priorizar** — System messages primero, luego los mensajes más recientes y grandes
-3. **Inyectar** — Agrega `cache_control: { type: "ephemeral" }` a los mejores candidatos (máximo `CACHE_MAX_BREAKPOINTS`)
+1. **Identificar candidatos** — Recopila:
+   - System messages (siempre, sin mínimo de caracteres)
+   - Tools/funciones array (si existe, 1 breakpoint para todo el array)
+   - Mensajes no-system (solo si tienen >= `CACHE_MIN_CHARS`)
 
-### Ejemplo de logs
+2. **Priorizar** — Distribuye los 4 breakpoints disponibles por orden de importancia:
+   - **Prioridad 0**: System prompt (caching estable)
+   - **Prioridad 1**: Tools/funciones (reutilizables en cada iteración del agent)
+   - **Prioridad 2**: Mensajes recientes (más cambian, menos beneficio)
 
-```
-info: Cache control injected into 4/4 breakpoints
-info: Chat Completions - Usage {
-  prompt_tokens: 12895,
-  cached_tokens: 12082,
-  cache_hit: "93.7%",
-  cost: "$0.009004"
-}
-```
+3. **Inyectar** — Agrega `cache_control: { type: "ephemeral" }` respetando la especificación oficial:
+   - En tools: coloca en el **último elemento** del array
+   - En mensajes: coloca en el **último text part** del content (convierte a multipart si es string)
+
 
 ## Scripts
 
@@ -197,14 +204,34 @@ info: Chat Completions - Usage {
 | `npm run lint`   | Verificar código con ESLint   |
 | `npm run format` | Formatear código con Prettier |
 
-## Roadmap
+## Verificación del funcionamiento
 
-Este proyecto se encuentra actualmente en fase de desarrollo personal y se utiliza activamente en entornos propios. A futuro se planea:
+Para confirmar que el cache está activo, revisa los logs en busca de líneas como:
 
-- Publicar como imagen de contenedor en **GitLab Container Registry** para facilitar la integración con `docker pull`
-- Soporte para configuración por modelo (reglas de cache específicas según el modelo detectado)
+```json
+{
+  "breakpoints": [
+    { "type": "system_message", "contentChars": 7432, "messageIndex": 0 },
+    { "type": "tools", "contentChars": 9893 },
+    { "type": "user_message", "contentChars": 2370, "messageIndex": 6 }
+  ],
+  "message": "Cache control injected into 3/4 breakpoints",
+  "totalTools": 14
+}
+```
 
-> Por ahora, para usarlo es necesario clonar el repositorio y construir la imagen localmente con `docker compose build`.
+Y en la respuesta de OpenRouter verifica los campos de uso:
+
+```json
+{
+  "cache_hit": "89.9%",
+  "cached_tokens": 8982,
+  "cache_write_tokens": 0,
+  "prompt_tokens": 9993
+}
+```
+
+Esto indica que el cache está siendo reutilizado correctamente.
 
 ---
 
